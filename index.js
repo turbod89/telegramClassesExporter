@@ -17,6 +17,10 @@ const parseType = type => {
         return 'boolean';
     } else if (type === 'String') {
         return 'string';
+    } else if (type === 'InputFile') {
+        return 'any';
+    } else if (type === 'InputMessageContent') {
+        return 'any';
     } else if (type === 'Integer') {
         return 'number';
     } else if (type === 'Float') {
