@@ -53,6 +53,22 @@ const Writer = function () {
         return this;
     }
 
+    const isMemberTypeAClass = memberType => {
+        const classIndex = classes.findIndex( cc => {
+            const r = new RegExp('^'+cc.name+'((\\[\\])+)*$','g');
+            return r.test(memberType);
+        });
+        return classIndex >= 0;
+    }
+
+    const getMemberTypeClass = memberType => {
+        const classIndex = classes.findIndex( cc => {
+            const r = new RegExp('^'+cc.name+'((\\[\\])+)*$','g');
+            return r.test(memberType);
+        });
+        return classIndex >= 0 ? classes[classIndex] : null;
+    }
+
     this.getClassDependecies = function (name) {
         const dep = [];
         const c = (name instanceof TelegramClass) ? name : this.getClass(name);
@@ -97,7 +113,7 @@ const Writer = function () {
     constructor (`;
         c.members.forEach(member => {
             code += `
-        ${member.name}: ${member.type}`;
+        private ${member.name}: ${member.type}`;
             if (member.optional) {
                 code += ' = null';
             }
@@ -167,12 +183,34 @@ const Writer = function () {
         let code = '';
         const c = (name instanceof TelegramClass) ? name : this.getClass(name);
         code +=`
-    public toArray () {
+    public toArray (deep: number = -1) {
+        
+        if (deep === 0) {
+            return {};
+        }
+
         return {`;
 
         c.members.forEach(member => {
-            code += `
-            '${member.name}': this.get_${member.name}(),`;
+            if (!isMemberTypeAClass(member.type)) {
+                code += `
+                '${member.name}': this.get_${member.name}(),`;
+                
+            } else {
+                const mc = getMemberTypeClass(member.type);
+                const recMapWriter = function (memberType,varName) {
+                    if (/\[\]$/g.test(memberType)) {
+                        return varName + '.map( element => '
+                        + recMapWriter(memberType.substr(/^(.+)\[\]$/g,'$1'),'element')
+                        + ' )';
+                    } else {
+                        return varName + '.toArray(deep - 1)';
+                    }
+                }
+                const varName = `this.get_${member.name}()`;
+                code += `
+                '${member.name}': ${recMapWriter(member.type,varName)},`;
+            }
         })
 
         code += `
@@ -190,8 +228,24 @@ const Writer = function () {
         return new ${c.name}(`;
 
         c.members.forEach(member => {
-            code += `
-            json['${member.name}'] ? json['${member.name}'] : null,`;
+            if (!isMemberTypeAClass(member.type)) {
+                code += `
+                json['${member.name}'] ? json['${member.name}'] : null,`;
+            } else {
+                const mc = getMemberTypeClass(member.type);
+                const recMapWriter = function (memberType,varName) {
+                    if (/\[\]$/g.test(memberType)) {
+                        return varName + '.map( element => '
+                        + recMapWriter(memberType.substr(/\[\]$/g,''),'element')
+                        + ' )';
+                    } else {
+                        return mc.name + '.fromJson(' + varName + ')';
+                    }
+                }
+                const varName = `json['${member.name}']`;
+                code += `
+                json['${member.name}'] ? ${recMapWriter(member.type,varName)} : null,`;
+            }
         })
 
         code += `
@@ -210,10 +264,6 @@ const Writer = function () {
         code += `
 
 export class ${c.name} {
-
-    /* members */
-
-${writeClassMemberDeclarations(c)}
 
     /* fromJson */
 ${writeClassFromArray(c)}
