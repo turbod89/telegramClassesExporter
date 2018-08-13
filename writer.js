@@ -201,7 +201,7 @@ const Writer = function () {
                 const recMapWriter = function (memberType,varName) {
                     if (/\[\]$/g.test(memberType)) {
                         return varName + '.map( element => '
-                        + recMapWriter(memberType.substr(/^(.+)\[\]$/g,'$1'),'element')
+                        + recMapWriter(memberType.replace(/^(.+)\[\]$/g,'$1'),'element')
                         + ' )';
                     } else {
                         return varName + '.toArray(deep - 1)';
@@ -236,7 +236,7 @@ const Writer = function () {
                 const recMapWriter = function (memberType,varName) {
                     if (/\[\]$/g.test(memberType)) {
                         return varName + '.map( element => '
-                        + recMapWriter(memberType.substr(/\[\]$/g,''),'element')
+                        + recMapWriter(memberType.replace(/\[\]$/g,''),'element')
                         + ' )';
                     } else {
                         return mc.name + '.fromJson(' + varName + ')';
