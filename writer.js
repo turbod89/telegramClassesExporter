@@ -184,7 +184,7 @@ const Writer = function () {
         const c = (name instanceof TelegramClass) ? name : this.getClass(name);
         code +=`
     public toArray (deep: number = -1) {
-        
+
         if (deep === 0) {
             return {};
         }
@@ -282,7 +282,7 @@ ${writeClassToArray(c)}
 }
 `
 
-        return code;
+        return code.trim() + '\n';
     }
 
     Object.defineProperties(this,{

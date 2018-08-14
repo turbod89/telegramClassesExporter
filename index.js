@@ -7,6 +7,7 @@ const Writer = require('./writer');
 const writer = new Writer();
 
 const parseType = type => {
+
     if (/ or /g.test(type)) {
         return parseType(type.replace(/^(.+) or .+$/g,'$1'));
     } else if (/^<a href="#[^"]+">(.+)<\/a>/g.test(type)) {
@@ -17,13 +18,15 @@ const parseType = type => {
         return 'boolean';
     } else if (type === 'String') {
         return 'string';
+    } else if (type === 'CallbackGame') {
+        return 'any';
     } else if (type === 'InputFile') {
         return 'any';
     } else if (type === 'InputMessageContent') {
         return 'any';
     } else if (type === 'Integer') {
         return 'number';
-    } else if (type === 'Float') {
+    } else if (type === 'Float' || type === 'Float number') {
         return 'number';
     } else if (/^Array of/g.test(type)) {
         return parseType(type.replace(/^Array of (.+)$/g,'$1[]'));
