@@ -14,13 +14,28 @@ const TelegramClass = function (name,desc,members) {
     })
 
     this.getFilename = function () {
-        return this.name + '.ts';
+        return this.name + '.php';
     }
 
     this.getImportFilename = function () {
-        return this.getFilename().replace(/.ts$/g,'');
+        return this.getFilename().replace(/.php$/g,'');
     }
 
+}
+
+const lowerCamelCase = function (name) {
+    let index = name.search(/_[a-z]/g);
+    while (index >= 0) {
+        name = name.substr(0,index) + name[index+1].toUpperCase() + name.substr(index+2,name.length);
+        index = name.search(/_[a-z]/g);
+    }
+
+    return name;
+}
+
+const upperCamelCase = function (name) {
+    name = lowerCamelCase(name);
+    return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
 const Writer = function () {
@@ -51,6 +66,35 @@ const Writer = function () {
         }
 
         return this;
+    }
+
+    this.parseType = type => {
+
+        if (/ or /g.test(type)) {
+            return this.parseType(type.replace(/^(.+) or .+$/g, '$1'));
+        } else if (/^<a href="#[^"]+">(.+)<\/a>/g.test(type)) {
+            return this.parseType(type.replace(/^<a href="#[^"]+">(.+)<\/a>/g, '$1'))
+        } else if (type === 'True') {
+            return 'boolean';
+        } else if (type === 'Boolean') {
+            return 'boolean';
+        } else if (type === 'String') {
+            return 'string';
+        } else if (type === 'CallbackGame') {
+            return 'any';
+        } else if (type === 'InputFile') {
+            return 'any';
+        } else if (type === 'InputMessageContent') {
+            return 'any';
+        } else if (type === 'Integer') {
+            return 'number';
+        } else if (type === 'Float' || type === 'Float number') {
+            return 'number';
+        } else if (/^Array of/g.test(type)) {
+            return this.parseType(type.replace(/^Array of (.+)$/g, '$1[]'));
+        } else {
+            return type.trim();
+        }
     }
 
     const isMemberTypeAClass = memberType => {
@@ -100,57 +144,29 @@ const Writer = function () {
         return this;
     }
 
-    this.parseType = type => {
-
-        if (/ or /g.test(type)) {
-            return this.parseType(type.replace(/^(.+) or .+$/g, '$1'));
-        } else if (/^<a href="#[^"]+">(.+)<\/a>/g.test(type)) {
-            return this.parseType(type.replace(/^<a href="#[^"]+">(.+)<\/a>/g, '$1'))
-        } else if (type === 'True') {
-            return 'boolean';
-        } else if (type === 'Boolean') {
-            return 'boolean';
-        } else if (type === 'String') {
-            return 'string';
-        } else if (type === 'CallbackGame') {
-            return 'any';
-        } else if (type === 'InputFile') {
-            return 'any';
-        } else if (type === 'InputMessageContent') {
-            return 'any';
-        } else if (type === 'Integer') {
-            return 'number';
-        } else if (type === 'Float' || type === 'Float number') {
-            return 'number';
-        } else if (/^Array of/g.test(type)) {
-            return this.parseType(type.replace(/^Array of (.+)$/g, '$1[]'));
-        } else {
-            return type.trim();
-        }
-    }
-
 
     const writeClassDependecies = (c) => {
         const dep = this.getClassDependecies(c);
-        return dep.reduce( (code,c) => code + `import { ${c.name} } from './${c.getImportFilename()}';\n`,'');
+        return `
+<?php
+
+namespace App;
+
+`;
     }
 
-    const writeClassConstructor = (name) => {
+    const writeClassFillable = (name) => {
         let code = '';
         const c = (name instanceof TelegramClass) ? name : this.getClass(name);
         code +=`
-    constructor (`;
+    protected $fillable = [`;
         c.members.forEach(member => {
             code += `
-        private ${member.name}: ${member.type}`;
-            if (member.optional) {
-                code += ' = null';
-            }
-            code+=',';
+        '${member.name}',`;
         })
 
         code += `
-    ) {}
+    ];
 `;
         return code;
     }
@@ -180,8 +196,8 @@ const Writer = function () {
 
         c.members.forEach(member => {
             code += `
-    public get_${member.name}() {
-        return this.${member.name};
+    public function get${upperCamelCase(member.name)}Attribute() {
+        return $this->attributes['${member.name}'];
     }
 `;
         })
@@ -196,10 +212,10 @@ const Writer = function () {
         code +=``;
 
         c.members.forEach(member => {
+            const isClass = isMemberTypeAClass(member.type) && member.type.substr(-2) !== '[]';
             code += `
-    public set_${member.name}(${member.name}: ${member.type}) {
-        this.${member.name} = ${member.name};
-        return this;
+    public function set${upperCamelCase(member.name)}Attribute(${isClass ? member.type+' ' : ''}\$${lowerCamelCase(member.name)}) {
+        $this->attributes['${member.name}'] = \$${lowerCamelCase(member.name)};
     }
 `;
         })
@@ -208,83 +224,6 @@ const Writer = function () {
         return code;
     }
 
-    const writeClassToArray = name => {
-        let code = '';
-        const c = (name instanceof TelegramClass) ? name : this.getClass(name);
-        code +=`
-    public toArray (deep: number = -1) {
-
-        if (deep === 0) {
-            return {};
-        }
-
-        return {`;
-
-        c.members.forEach(member => {
-            if (!isMemberTypeAClass(member.type)) {
-                code += `
-                '${member.name}': this.get_${member.name}(),`;
-                
-            } else {
-                const mc = getMemberTypeClass(member.type);
-                const recMapWriter = function (memberType,varName) {
-                    if (/\[\]$/g.test(memberType)) {
-                        return varName + '.map( element => '
-                        + recMapWriter(memberType.replace(/^(.+)\[\]$/g,'$1'),'element')
-                        + ' )';
-                    } else {
-                        return varName + '.toArray(deep - 1)';
-                    }
-                }
-                const varName = `this.get_${member.name}()`;
-                code += `
-                '${member.name}': ${recMapWriter(member.type,varName)},`;
-            }
-        })
-
-        code += `
-        };
-    }
-`;
-        return code;
-    }
-
-    const writeClassFromArray = name => {
-        let code = '';
-        const c = (name instanceof TelegramClass) ? name : this.getClass(name);
-        code +=`
-    public static fromJson (json) {
-        return new ${c.name}(`;
-
-        c.members.forEach(member => {
-            if (!isMemberTypeAClass(member.type)) {
-                code += `
-                json['${member.name}'] ? json['${member.name}'] : null,`;
-            } else {
-                const mc = getMemberTypeClass(member.type);
-                const recMapWriter = function (memberType,varName) {
-                    if (/\[\]$/g.test(memberType)) {
-                        return varName + '.map( element => '
-                        + recMapWriter(memberType.replace(/\[\]$/g,''),'element')
-                        + ' )';
-                    } else {
-                        return mc.name + '.fromJson(' + varName + ')';
-                    }
-                }
-                const varName = `json['${member.name}']`;
-                code += `
-                json['${member.name}'] ? ${recMapWriter(member.type,varName)} : null,`;
-            }
-        })
-
-        code += `
-        );
-    }
-`;
-        return code;
-    }
-
-
     this.writeClass = function (name) {
         let code = '';
         const c = (name instanceof TelegramClass) ? name : this.getClass(name);
@@ -292,13 +231,14 @@ const Writer = function () {
         code += '\n';
         code += `
 
-export class ${c.name} {
+class ${c.name} extends BaseModel {
 
-    /* fromJson */
-${writeClassFromArray(c)}
-
-    /* Constructor */
-${writeClassConstructor(c)}
+    /**
+     * The attributes that are mass assignable.
+     *
+     * @var array
+     */
+${writeClassFillable(c)}
 
     /* Getters*/
 ${writeClassGetters(c)}
@@ -306,8 +246,6 @@ ${writeClassGetters(c)}
     /* Setters*/
 ${writeClassSetters(c)}
 
-    /* toArray */
-${writeClassToArray(c)}
 }
 `
 

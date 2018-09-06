@@ -14,13 +14,40 @@ const TelegramClass = function (name,desc,members) {
     })
 
     this.getFilename = function () {
-        return this.name + '.ts';
+        return this.name + '.js';
     }
 
     this.getImportFilename = function () {
-        return this.getFilename().replace(/.ts$/g,'');
+        return this.getFilename().replace(/.js$/g,'');
     }
 
+}
+
+const lowerCamelCase = function (name) {
+    let index = name.search(/_[a-z]/g);
+    while (index >= 0) {
+        name = name.substr(0, index) + name[index + 1].toUpperCase() + name.substr(index + 2, name.length);
+        index = name.search(/_[a-z]/g);
+    }
+
+    return name;
+}
+
+const upperCamelCase = function (name) {
+    name = lowerCamelCase(name);
+    return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+const snakeCase = function (name) {
+    const text = lowerCamelCase(name);
+    const result = text.replace(/([A-Z])/g, "_$1");
+    const finalResult = result.toLowerCase();
+    return finalResult;
+}
+
+const parseCase = function (name) {
+    return snakeCase(name);
+    // return lowerCamelCase(name);
 }
 
 const Writer = function () {
@@ -51,6 +78,35 @@ const Writer = function () {
         }
 
         return this;
+    }
+
+    this.parseType = type => {
+
+        if (/ or /g.test(type)) {
+            return this.parseType(type.replace(/^(.+) or .+$/g, '$1'));
+        } else if (/^<a href="#[^"]+">(.+)<\/a>/g.test(type)) {
+            return this.parseType(type.replace(/^<a href="#[^"]+">(.+)<\/a>/g, '$1'))
+        } else if (type === 'True') {
+            return 'boolean';
+        } else if (type === 'Boolean') {
+            return 'boolean';
+        } else if (type === 'String') {
+            return 'string';
+        } else if (type === 'CallbackGame') {
+            return 'any';
+        } else if (type === 'InputFile') {
+            return 'any';
+        } else if (type === 'InputMessageContent') {
+            return 'any';
+        } else if (type === 'Integer') {
+            return 'number';
+        } else if (type === 'Float' || type === 'Float number') {
+            return 'number';
+        } else if (/^Array of/g.test(type)) {
+            return this.parseType(type.replace(/^Array of (.+)$/g, '$1[]'));
+        } else {
+            return type.trim();
+        }
     }
 
     const isMemberTypeAClass = memberType => {
@@ -100,60 +156,11 @@ const Writer = function () {
         return this;
     }
 
-    this.parseType = type => {
-
-        if (/ or /g.test(type)) {
-            return this.parseType(type.replace(/^(.+) or .+$/g, '$1'));
-        } else if (/^<a href="#[^"]+">(.+)<\/a>/g.test(type)) {
-            return this.parseType(type.replace(/^<a href="#[^"]+">(.+)<\/a>/g, '$1'))
-        } else if (type === 'True') {
-            return 'boolean';
-        } else if (type === 'Boolean') {
-            return 'boolean';
-        } else if (type === 'String') {
-            return 'string';
-        } else if (type === 'CallbackGame') {
-            return 'any';
-        } else if (type === 'InputFile') {
-            return 'any';
-        } else if (type === 'InputMessageContent') {
-            return 'any';
-        } else if (type === 'Integer') {
-            return 'number';
-        } else if (type === 'Float' || type === 'Float number') {
-            return 'number';
-        } else if (/^Array of/g.test(type)) {
-            return this.parseType(type.replace(/^Array of (.+)$/g, '$1[]'));
-        } else {
-            return type.trim();
-        }
-    }
-
-
     const writeClassDependecies = (c) => {
         const dep = this.getClassDependecies(c);
-        return dep.reduce( (code,c) => code + `import { ${c.name} } from './${c.getImportFilename()}';\n`,'');
+        return dep.reduce((code, c) => code + `const ${c.name} = require('./${c.getImportFilename()}');\n`, '');
     }
 
-    const writeClassConstructor = (name) => {
-        let code = '';
-        const c = (name instanceof TelegramClass) ? name : this.getClass(name);
-        code +=`
-    constructor (`;
-        c.members.forEach(member => {
-            code += `
-        private ${member.name}: ${member.type}`;
-            if (member.optional) {
-                code += ' = null';
-            }
-            code+=',';
-        })
-
-        code += `
-    ) {}
-`;
-        return code;
-    }
 
     const writeClassMemberDeclarations = name => {
         let code = '';
@@ -161,50 +168,57 @@ const Writer = function () {
         code +=``;
         c.members.forEach(member => {
             code += `
-    /* ${member.desc.length < 120 ? member.desc : member.desc.substr(0,117)+'...'} */
-    private ${member.name}: ${member.type}`;
-            if (member.optional) {
-                code += ' = null';
+    let ${parseCase(member.name)} = `;
+
+            if (!isMemberTypeAClass(member.type)) {
+                code += `data['${member.name}'] ? data['${member.name}'] : null`;
+            } else {
+                const mc = getMemberTypeClass(member.type);
+                const recMapWriter = function (memberType, varName) {
+                    if (/\[\]$/g.test(memberType)) {
+                        return varName + '.map( element => ' +
+                            recMapWriter(memberType.replace(/\[\]$/g, ''), 'element') +
+                            ' )';
+                    } else {
+                        return 'new ' + mc.name + '(' + varName + ')';
+                    }
+                }
+                const varName = `data['${member.name}']`;
+                code += `data['${member.name}'] ? ${recMapWriter(member.type,varName)} : null`;
             }
-            code+=';\n';
+
+            code +=';';
+            code += ` /* ${member.desc.length < 120 ? member.desc : member.desc.substr(0,117)+'...'} */`;
         })
 
-        code += ``;
         return code;
     }
 
-    const writeClassGetters = name => {
+    const writeClassGettersAndSetters = name => {
         let code = '';
         const c = (name instanceof TelegramClass) ? name : this.getClass(name);
-        code +=``;
+        code +=`
+    Object.defineProperties(this, {
+`;
 
         c.members.forEach(member => {
             code += `
-    public get_${member.name}() {
-        return this.${member.name};
-    }
+        "${parseCase(member.name)}": {
+            enumerable: true,
+            modificable: false,
+            set: function (value) {
+                ${parseCase(member.name)} = value;
+            },
+            get: function () {
+                return ${parseCase(member.name)};
+            },
+        },
 `;
         })
 
-        code += ``;
-        return code;
-    }
-    
-    const writeClassSetters = name => {
-        let code = '';
-        const c = (name instanceof TelegramClass) ? name : this.getClass(name);
-        code +=``;
-
-        c.members.forEach(member => {
-            code += `
-    public set_${member.name}(${member.name}: ${member.type}) {
-        this.${member.name} = ${member.name};
-        return this;
-    }
+        code += `
+    });
 `;
-        })
-
-        code += ``;
         return code;
     }
 
@@ -212,18 +226,22 @@ const Writer = function () {
         let code = '';
         const c = (name instanceof TelegramClass) ? name : this.getClass(name);
         code +=`
-    public toArray (deep: number = -1) {
+    Object.defineProperties(this, {
+        'toArray': {
+            enumerable: false,
+            modificable: false,
+            value: function (deep = -1) {
 
-        if (deep === 0) {
-            return {};
-        }
+                if (deep === 0) {
+                    return {};
+                }
 
-        return {`;
+                return {`;
 
         c.members.forEach(member => {
             if (!isMemberTypeAClass(member.type)) {
                 code += `
-                '${member.name}': this.get_${member.name}(),`;
+                    '${member.name}': this.${parseCase(member.name)},`;
                 
             } else {
                 const mc = getMemberTypeClass(member.type);
@@ -236,54 +254,20 @@ const Writer = function () {
                         return varName + '.toArray(deep - 1)';
                     }
                 }
-                const varName = `this.get_${member.name}()`;
+                const varName = `this.${parseCase(member.name)}`;
                 code += `
-                '${member.name}': ${recMapWriter(member.type,varName)},`;
+                    '${member.name}': ${recMapWriter(member.type,varName)},`;
             }
         })
 
         code += `
-        };
-    }
+                };
+            },
+        },
+    });
 `;
         return code;
     }
-
-    const writeClassFromArray = name => {
-        let code = '';
-        const c = (name instanceof TelegramClass) ? name : this.getClass(name);
-        code +=`
-    public static fromJson (json) {
-        return new ${c.name}(`;
-
-        c.members.forEach(member => {
-            if (!isMemberTypeAClass(member.type)) {
-                code += `
-                json['${member.name}'] ? json['${member.name}'] : null,`;
-            } else {
-                const mc = getMemberTypeClass(member.type);
-                const recMapWriter = function (memberType,varName) {
-                    if (/\[\]$/g.test(memberType)) {
-                        return varName + '.map( element => '
-                        + recMapWriter(memberType.replace(/\[\]$/g,''),'element')
-                        + ' )';
-                    } else {
-                        return mc.name + '.fromJson(' + varName + ')';
-                    }
-                }
-                const varName = `json['${member.name}']`;
-                code += `
-                json['${member.name}'] ? ${recMapWriter(member.type,varName)} : null,`;
-            }
-        })
-
-        code += `
-        );
-    }
-`;
-        return code;
-    }
-
 
     this.writeClass = function (name) {
         let code = '';
@@ -291,20 +275,13 @@ const Writer = function () {
         code += writeClassDependecies(c);
         code += '\n';
         code += `
+module.exports = function ${c.name}(data) {
 
-export class ${c.name} {
+    /* Class members */
+${writeClassMemberDeclarations(c)}
 
-    /* fromJson */
-${writeClassFromArray(c)}
-
-    /* Constructor */
-${writeClassConstructor(c)}
-
-    /* Getters*/
-${writeClassGetters(c)}
-
-    /* Setters*/
-${writeClassSetters(c)}
+    /* Getters and Setters*/
+${writeClassGettersAndSetters(c)}
 
     /* toArray */
 ${writeClassToArray(c)}

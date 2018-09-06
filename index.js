@@ -2,7 +2,7 @@ const fs = require('fs');
 const fetch = require('node-fetch');
 const html2markdown = require('html-to-markdown');
 const config = require('./config');
-const Writer = require('./writer');
+const Writer = require('./writer-sql');
 
 const writer = new Writer();
 
@@ -100,7 +100,7 @@ const getClassMembers = function (html,className) {
         while (submatch !== null) {
             data.push({
                 'name': submatch[1],
-                'type': parseType(submatch[2]),
+                'type': writer.parseType(submatch[2]),
                 'desc': html2markdown.convert(submatch[3]),
                 'optional': /^<em>Optional/g.test(submatch[3])
             });
